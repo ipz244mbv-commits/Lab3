@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 
@@ -13,30 +14,24 @@ namespace MKR1
         public abstract string OuterHtml { get; }
         public abstract string InnerHtml { get; }
 
-        // === ПАТЕРН 1: ШАБЛОННИЙ МЕТОД (TEMPLATE METHOD) ===
-        // Визначає жорсткий скелет алгоритму рендерингу
+        // Шаблонний метод (з попереднього кроку)
         public string Render()
         {
             OnCreated();
             OnStylesApplied();
             OnClassListApplied();
-            
-            string output = OuterHtml; // Основна робота
-            
+            string output = OuterHtml;
             OnTextRendered();
             return output;
         }
 
-        // Хуки життєвого циклу (пусті за замовчуванням)
         public virtual void OnCreated() { }
         public virtual void OnInserted() { }
-        public virtual void OnRemoved() { }
         public virtual void OnStylesApplied() { }
         public virtual void OnClassListApplied() { }
         public virtual void OnTextRendered() { }
     }
 
-    // Текстовий вузол
     public class LightTextNode : LightNode
     {
         private string _text;
@@ -45,8 +40,8 @@ namespace MKR1
         public override string OuterHtml => _text;
     }
 
-    // Елемент розмітки
-    public class LightElementNode : LightNode
+    // === ПАТЕРН 2: ІТЕРАТОР (ITERATOR) ===
+    public class LightElementNode : LightNode, IEnumerable<LightNode>
     {
         public string TagName { get; set; }
         public DisplayType DisplayType { get; set; }
@@ -65,7 +60,43 @@ namespace MKR1
         public void Add(LightNode node)
         {
             Children.Add(node);
-            node.OnInserted(); // Викликаємо хук при додаванні в дерево
+            node.OnInserted();
+        }
+
+        // Ітератор для обходу в глибину (DFS) - за замовчуванням
+        public IEnumerator<LightNode> GetEnumerator()
+        {
+            foreach (var child in Children)
+            {
+                yield return child; // Повертаємо сам вузол
+                if (child is LightElementNode element)
+                {
+                    foreach (var subChild in element) // Рекурсивно йдемо в глибину
+                    {
+                        yield return subChild;
+                    }
+                }
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        // Ітератор для обходу в ширину (BFS)
+        public IEnumerable<LightNode> BreadthFirstSearch()
+        {
+            Queue<LightNode> queue = new Queue<LightNode>();
+            foreach (var child in Children) queue.Enqueue(child);
+
+            while (queue.Count > 0)
+            {
+                var node = queue.Dequeue();
+                yield return node;
+
+                if (node is LightElementNode element)
+                {
+                    foreach (var child in element.Children) queue.Enqueue(child);
+                }
+            }
         }
 
         public override string InnerHtml
@@ -85,7 +116,6 @@ namespace MKR1
                 StringBuilder sb = new StringBuilder();
                 sb.Append($"<{TagName}");
                 if (CssClasses.Count > 0) sb.Append($" class=\"{string.Join(" ", CssClasses)}\"");
-                
                 if (ClosingType == ClosingType.Single) sb.Append(" />");
                 else
                 {
@@ -99,42 +129,37 @@ namespace MKR1
         }
     }
 
-    // --- КЛАС ДЛЯ ДЕМОНСТРАЦІЇ ХУКІВ ---
-    public class TrackedElementNode : LightElementNode
-    {
-        public TrackedElementNode(string tagName, DisplayType displayType, ClosingType closingType, List<string> cssClasses) 
-            : base(tagName, displayType, closingType, cssClasses) { }
-
-        // Перевизначаємо хуки, щоб побачити їх в консолі
-        public override void OnCreated() => Console.WriteLine($"[Hook]: Елемент <{TagName}> готується до рендерингу.");
-        public override void OnInserted() => Console.WriteLine($"[Hook]: Елемент вставлено в DOM.");
-        public override void OnStylesApplied() => Console.WriteLine($"[Hook]: До <{TagName}> застосовано базові стилі.");
-        public override void OnClassListApplied() => Console.WriteLine($"[Hook]: Перевірка CSS класів: {string.Join(", ", CssClasses)}");
-        public override void OnTextRendered() => Console.WriteLine($"[Hook]: Вміст <{TagName}> успішно відрендерено на екран!\n");
-    }
-
     class Program
     {
         static void Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            
-            Console.WriteLine("=== ПАТЕРН 1: ШАБЛОННИЙ МЕТОД (ЖИТТЄВИЙ ЦИКЛ) ===\n");
-            
-            // Створюємо елемент, який відслідковує свій життєвий цикл
-            TrackedElementNode div = new TrackedElementNode("div", DisplayType.Block, ClosingType.Paired, new List<string> { "container", "highlight" });
-            
-            LightTextNode text = new LightTextNode("Привіт, це тест Шаблонного методу!");
-            
-            Console.WriteLine("--- Додаємо елемент ---");
-            div.Add(text); // Викличе OnInserted
 
-            Console.WriteLine("\n--- Починаємо рендеринг ---");
-            // Викликаємо шаблонний метод Render() замість звичайного OuterHtml
-            string result = div.Render(); 
-            
-            Console.WriteLine("--- Результат HTML ---");
-            Console.WriteLine(result);
+            // Створюємо дерево: div -> (p, span -> b)
+            var div = new LightElementNode("div", DisplayType.Block, ClosingType.Paired, new List<string> { "main" });
+            var p = new LightElementNode("p", DisplayType.Block, ClosingType.Paired, null);
+            var span = new LightElementNode("span", DisplayType.Inline, ClosingType.Paired, null);
+            var b = new LightElementNode("b", DisplayType.Inline, ClosingType.Paired, null);
+
+            div.Add(p);
+            div.Add(span);
+            span.Add(b);
+
+            Console.WriteLine("=== ТЕСТ ПАТЕРНУ ІТЕРАТОР (ОБХІД ДОКУМЕНТА) ===\n");
+
+            Console.WriteLine("--- Обхід в глибину (DFS): ---");
+            foreach (var node in div)
+            {
+                string type = node is LightElementNode el ? $"<{el.TagName}>" : "Текст";
+                Console.WriteLine($"Знайдено елемент: {type}");
+            }
+
+            Console.WriteLine("\n--- Обхід в ширину (BFS): ---");
+            foreach (var node in div.BreadthFirstSearch())
+            {
+                string type = node is LightElementNode el ? $"<{el.TagName}>" : "Текст";
+                Console.WriteLine($"Знайдено елемент: {type}");
+            }
 
             Console.ReadLine();
         }
