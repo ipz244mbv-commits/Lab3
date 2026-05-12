@@ -8,7 +8,40 @@ namespace MKR1
     public enum DisplayType { Block, Inline }
     public enum ClosingType { Single, Paired }
 
-    // --- БАЗОВІ КЛАСИ (Template Method + Iterator всередині) ---
+    // === ПАТЕРН 4: СТЕЙТ (STATE) ===
+    public interface INodeState
+    {
+        string Render(LightElementNode context);
+    }
+
+    public class VisibleState : INodeState
+    {
+        public string Render(LightElementNode context)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append($"<{context.TagName}");
+            if (context.CssClasses.Count > 0) sb.Append($" class=\"{string.Join(" ", context.CssClasses)}\"");
+            if (context.ClosingType == ClosingType.Single) sb.Append(" />");
+            else
+            {
+                sb.Append(">");
+                sb.Append(context.InnerHtml);
+                sb.Append($"</{context.TagName}>");
+            }
+            if (context.DisplayType == DisplayType.Block) sb.Append("\n");
+            return sb.ToString();
+        }
+    }
+
+    public class HiddenState : INodeState
+    {
+        public string Render(LightElementNode context)
+        {
+            return $"\n";
+        }
+    }
+
+    // --- БАЗОВІ КЛАСИ ---
     public abstract class LightNode
     {
         public abstract string OuterHtml { get; }
@@ -47,12 +80,21 @@ namespace MKR1
         public List<string> CssClasses { get; set; } = new List<string>();
         public List<LightNode> Children { get; set; } = new List<LightNode>();
 
+        // Стан за замовчуванням - видимий
+        private INodeState _state = new VisibleState();
+
         public LightElementNode(string tagName, DisplayType displayType, ClosingType closingType, List<string> cssClasses)
         {
             TagName = tagName;
             DisplayType = displayType;
             ClosingType = closingType;
             CssClasses = cssClasses ?? new List<string>();
+        }
+
+        public void SetState(INodeState state)
+        {
+            _state = state;
+            Console.WriteLine($"[State]: Стан елемента <{TagName}> змінено на {state.GetType().Name}.");
         }
 
         public void Add(LightNode node)
@@ -82,61 +124,8 @@ namespace MKR1
             }
         }
 
-        public override string OuterHtml
-        {
-            get
-            {
-                StringBuilder sb = new StringBuilder();
-                sb.Append($"<{TagName}");
-                if (CssClasses.Count > 0) sb.Append($" class=\"{string.Join(" ", CssClasses)}\"");
-                if (ClosingType == ClosingType.Single) sb.Append(" />");
-                else
-                {
-                    sb.Append(">");
-                    sb.Append(InnerHtml);
-                    sb.Append($"</{TagName}>");
-                }
-                if (DisplayType == DisplayType.Block) sb.Append("\n");
-                return sb.ToString();
-            }
-        }
-    }
-
-    // === ПАТЕРН 3: КОМАНДА (COMMAND) ===
-    public interface ICommand
-    {
-        void Execute();
-        void Undo(); // Додамо можливість скасування для солідності
-    }
-
-    public class AddClassCommand : ICommand
-    {
-        private LightElementNode _node;
-        private string _className;
-
-        public AddClassCommand(LightElementNode node, string className)
-        {
-            _node = node;
-            _className = className;
-        }
-
-        public void Execute()
-        {
-            if (!_node.CssClasses.Contains(_className))
-            {
-                _node.CssClasses.Add(_className);
-                Console.WriteLine($"[Command]: Клас '{_className}' додано до <{_node.TagName}>.");
-            }
-        }
-
-        public void Undo()
-        {
-            if (_node.CssClasses.Contains(_className))
-            {
-                _node.CssClasses.Remove(_className);
-                Console.WriteLine($"[Command]: Клас '{_className}' видалено (Undo) з <{_node.TagName}>.");
-            }
-        }
+        // Тепер OuterHtml залежить від стану!
+        public override string OuterHtml => _state.Render(this);
     }
 
     class Program
@@ -145,22 +134,19 @@ namespace MKR1
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-            Console.WriteLine("=== ТЕСТ ПАТЕРНУ КОМАНДА ===\n");
+            Console.WriteLine("=== ТЕСТ ПАТЕРНУ СТЕЙТ ===\n");
 
-            var btn = new LightElementNode("button", DisplayType.Inline, ClosingType.Paired, new List<string> { "btn" });
-            Console.WriteLine("Початковий стан: " + btn.OuterHtml.Trim());
+            var section = new LightElementNode("section", DisplayType.Block, ClosingType.Paired, new List<string> { "content" });
+            section.Add(new LightTextNode("Цей текст видно, коли стан Visible."));
 
-            // Створюємо та виконуємо команду
-            ICommand addActive = new AddClassCommand(btn, "btn-active");
-            ICommand addPrimary = new AddClassCommand(btn, "btn-primary");
+            Console.WriteLine("--- Поточний рендеринг: ---");
+            Console.Write(section.OuterHtml);
 
-            addActive.Execute();
-            addPrimary.Execute();
-            Console.WriteLine("Після виконання команд: " + btn.OuterHtml.Trim());
+            // Змінюємо стан на прихований
+            section.SetState(new HiddenState());
 
-            // Скасовуємо останню дію
-            addPrimary.Undo();
-            Console.WriteLine("Після скасування: " + btn.OuterHtml.Trim());
+            Console.WriteLine("\n--- Рендеринг після зміни стану: ---");
+            Console.Write(section.OuterHtml);
 
             Console.ReadLine();
         }
