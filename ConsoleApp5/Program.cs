@@ -8,12 +8,26 @@ namespace MKR1
     public enum DisplayType { Block, Inline }
     public enum ClosingType { Single, Paired }
 
-    // === ПАТЕРН 4: СТЕЙТ (STATE) ===
-    public interface INodeState
+    // === ПАТЕРН 5: ВІДВІДУВАЧ (VISITOR) ===
+    public interface IVisitor
     {
-        string Render(LightElementNode context);
+        void Visit(LightElementNode element);
+        void Visit(LightTextNode text);
     }
 
+    public class StatisticsVisitor : IVisitor
+    {
+        public int ElementCount { get; private set; } = 0;
+        public int TextCount { get; private set; } = 0;
+
+        public void Visit(LightElementNode element) => ElementCount++;
+        public void Visit(LightTextNode text) => TextCount++;
+        
+        public void PrintReport() => Console.WriteLine($"[Visitor]: Всього елементів: {ElementCount}, Текстових вузлів: {TextCount}");
+    }
+
+    // === ПАТЕРН 4: СТЕЙТ (STATE) ===
+    public interface INodeState { string Render(LightElementNode context); }
     public class VisibleState : INodeState
     {
         public string Render(LightElementNode context)
@@ -32,26 +46,22 @@ namespace MKR1
             return sb.ToString();
         }
     }
-
-    public class HiddenState : INodeState
-    {
-        public string Render(LightElementNode context)
-        {
-            return $"\n";
-        }
-    }
+    public class HiddenState : INodeState { public string Render(LightElementNode context) => $"\n"; }
 
     // --- БАЗОВІ КЛАСИ ---
     public abstract class LightNode
     {
         public abstract string OuterHtml { get; }
         public abstract string InnerHtml { get; }
+        
+        // ПАТЕРН 5: Прийняття відвідувача
+        public abstract void Accept(IVisitor visitor);
 
+        // ПАТЕРН 1: ШАБЛОННИЙ МЕТОД
         public string Render()
         {
             OnCreated();
             OnStylesApplied();
-            OnClassListApplied();
             string output = OuterHtml;
             OnTextRendered();
             return output;
@@ -60,7 +70,6 @@ namespace MKR1
         public virtual void OnCreated() { }
         public virtual void OnInserted() { }
         public virtual void OnStylesApplied() { }
-        public virtual void OnClassListApplied() { }
         public virtual void OnTextRendered() { }
     }
 
@@ -70,6 +79,7 @@ namespace MKR1
         public LightTextNode(string text) { _text = text; }
         public override string InnerHtml => _text;
         public override string OuterHtml => _text;
+        public override void Accept(IVisitor visitor) => visitor.Visit(this);
     }
 
     public class LightElementNode : LightNode, IEnumerable<LightNode>
@@ -80,22 +90,16 @@ namespace MKR1
         public List<string> CssClasses { get; set; } = new List<string>();
         public List<LightNode> Children { get; set; } = new List<LightNode>();
 
-        // Стан за замовчуванням - видимий
         private INodeState _state = new VisibleState();
 
-        public LightElementNode(string tagName, DisplayType displayType, ClosingType closingType, List<string> cssClasses)
+        public LightElementNode(string tagName, DisplayType displayType, ClosingType closingType)
         {
             TagName = tagName;
             DisplayType = displayType;
             ClosingType = closingType;
-            CssClasses = cssClasses ?? new List<string>();
         }
 
-        public void SetState(INodeState state)
-        {
-            _state = state;
-            Console.WriteLine($"[State]: Стан елемента <{TagName}> змінено на {state.GetType().Name}.");
-        }
+        public void SetState(INodeState state) => _state = state;
 
         public void Add(LightNode node)
         {
@@ -103,13 +107,19 @@ namespace MKR1
             node.OnInserted();
         }
 
+        public override void Accept(IVisitor visitor)
+        {
+            visitor.Visit(this);
+            foreach (var child in Children) child.Accept(visitor);
+        }
+
+        // ПАТЕРН 2: ІТЕРАТОР
         public IEnumerator<LightNode> GetEnumerator()
         {
             foreach (var child in Children)
             {
                 yield return child;
-                if (child is LightElementNode element)
-                    foreach (var subChild in element) yield return subChild;
+                if (child is LightElementNode element) foreach (var sub in element) yield return sub;
             }
         }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -124,8 +134,16 @@ namespace MKR1
             }
         }
 
-        // Тепер OuterHtml залежить від стану!
         public override string OuterHtml => _state.Render(this);
+    }
+
+    // ПАТЕРН 3: КОМАНДА
+    public class AddClassCommand
+    {
+        private LightElementNode _node;
+        private string _class;
+        public AddClassCommand(LightElementNode node, string cls) { _node = node; _class = cls; }
+        public void Execute() { if (!_node.CssClasses.Contains(_class)) _node.CssClasses.Add(_class); }
     }
 
     class Program
@@ -134,19 +152,30 @@ namespace MKR1
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-            Console.WriteLine("=== ТЕСТ ПАТЕРНУ СТЕЙТ ===\n");
+            // Створюємо структуру
+            var body = new LightElementNode("body", DisplayType.Block, ClosingType.Paired);
+            var h1 = new LightElementNode("h1", DisplayType.Block, ClosingType.Paired);
+            h1.Add(new LightTextNode("Модульна робота №1"));
+            body.Add(h1);
 
-            var section = new LightElementNode("section", DisplayType.Block, ClosingType.Paired, new List<string> { "content" });
-            section.Add(new LightTextNode("Цей текст видно, коли стан Visible."));
+            Console.WriteLine("=== ФІНАЛЬНИЙ ТЕСТ: ВСІ 5 ПАТЕРНІВ ПРАЦЮЮТЬ ===\n");
 
-            Console.WriteLine("--- Поточний рендеринг: ---");
-            Console.Write(section.OuterHtml);
+            // 1. Тест Команди
+            new AddClassCommand(body, "main-page").Execute();
+            
+            // 2. Тест Ітератора
+            Console.WriteLine("--- Обхід дерева (Iterator): ---");
+            foreach (var node in body) Console.WriteLine($"Знайдено: {node.GetType().Name}");
 
-            // Змінюємо стан на прихований
-            section.SetState(new HiddenState());
+            // 3. Тест Стейту
+            h1.SetState(new HiddenState());
+            Console.WriteLine("\n--- Рендеринг (Template Method + State): ---");
+            Console.WriteLine(body.Render());
 
-            Console.WriteLine("\n--- Рендеринг після зміни стану: ---");
-            Console.Write(section.OuterHtml);
+            // 4. Тест Відвідувача
+            var stats = new StatisticsVisitor();
+            body.Accept(stats);
+            stats.PrintReport();
 
             Console.ReadLine();
         }
